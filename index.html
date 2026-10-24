@@ -55,6 +55,14 @@ textarea{min-height:110px;resize:vertical}
 #maps img{width:100%;border-radius:10px;border:1px solid var(--line);margin-top:8px;background:#fff}
 #viewer{position:fixed;inset:0;z-index:60;background:#000;display:none;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none}
 #viewer img{width:100vw;max-width:none;display:block;background:#fff;transform-origin:0 0;will-change:transform;-webkit-user-drag:none}
+#viewer .vbar{position:fixed;left:0;right:0;bottom:0;z-index:61;display:flex;flex-direction:column;align-items:center;gap:8px;padding:10px 12px calc(10px + env(safe-area-inset-bottom));background:rgba(0,0,0,.72);color:#fff;touch-action:manipulation}
+#viewer .vlines{display:flex;gap:6px;flex-wrap:wrap;justify-content:center}
+#viewer .vbar .vl{position:static;width:auto;height:auto;border-radius:12px;padding:3px 10px;font-size:12px;font-weight:700;opacity:.55;color:#fff}
+#viewer .vbar .vl.on{opacity:1;outline:2px solid #fff}
+#viewer .vrow{display:flex;width:100%;align-items:center;gap:8px}
+#viewer .vbar .vn{position:static;width:auto;height:auto;flex:1;min-width:0;border-radius:10px;padding:10px 6px;font-size:14px;background:rgba(255,255,255,.16);color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#viewer .vbar .vn:disabled{opacity:.25}
+#viewer .vcur{flex:1.2;text-align:center;font-weight:700;font-size:16px}
 #viewer .zb{position:fixed;right:12px;width:44px;height:44px;border-radius:50%;border:0;background:rgba(0,0,0,.65);color:#fff;font-size:24px;z-index:61}
 #viewer button{position:fixed;top:max(12px,env(safe-area-inset-top));right:12px;width:44px;height:44px;border-radius:50%;border:0;background:rgba(0,0,0,.65);color:#fff;font-size:22px;z-index:61}
 .hint{font-size:12px;color:var(--sub);margin:6px 0 0;line-height:1.5}
@@ -70,7 +78,7 @@ textarea{min-height:110px;resize:vertical}
   <div id="map"></div>
   <div class="zoom"><button id="zin" aria-label="확대">+</button><button id="zout" aria-label="축소">−</button></div>
 </div>
-<div id="viewer"><button id="vClose" aria-label="닫기">✕</button><button class="zb" id="vIn" style="top:70px" aria-label="확대">+</button><button class="zb" id="vOut" style="top:122px" aria-label="축소">−</button><img id="vImg" alt="역내 지도"></div>
+<div id="viewer"><button id="vClose" aria-label="닫기">✕</button><button class="zb" id="vIn" style="top:70px" aria-label="확대">+</button><button class="zb" id="vOut" style="top:122px" aria-label="축소">−</button><img id="vImg" alt="역내 지도"><div class="vbar"><div class="vlines" id="vLines"></div><div class="vrow"><button class="vn" id="vPrev"></button><div class="vcur" id="vCur"></div><button class="vn" id="vNext"></button></div></div></div>
 <div id="backdrop"></div>
 <div id="sheet" role="dialog" aria-modal="true">
   <div class="grab"></div>
@@ -352,7 +360,7 @@ function openStation(n){
   });
   const mp = $('#maps'); mp.innerHTML = '';
   ((window.STATION_MAPS||{})[n]||[]).forEach(m => {
-    const im = document.createElement('img'); im.src = m.file; im.alt = m.alt;    im.onclick = () => { $('#vImg').src = m.file; $('#viewer').style.display = 'block'; $('#viewer').scrollTo(0,0); };
+    const im = document.createElement('img'); im.src = m.file; im.alt = m.alt;    im.onclick = () => window.openViewer(n, m.file);
     mp.appendChild(im);
   });
   $('#sNamu').href = 'https://namu.wiki/Search?q=' + encodeURIComponent(n + '역');
@@ -373,10 +381,62 @@ $('#vClose').onclick = () => { $('#viewer').style.display = 'none'; };
 /* 이미지 뷰어: 핀치 확대/축소, 드래그 이동, 휠, 더블탭, +/- 버튼 */
 (() => {
   const viewer = $('#viewer'), img = $('#vImg');
-  const MIN = 1, MAX = 8, START = 2.5;
+  const MIN = 1, MAX = 8, START = 1, ZOOM_TAP = 2.5;
   let s = START, tx = 0, ty = 0;
   const pts = new Map();
   let lastDist = 0, lastTap = 0;
+  let sw = null;   // 스와이프 판정용 시작 상태
+
+  /* 역 순서: 같은 호선 안에서 이전/다음 (지도가 있는 역만) */
+  let cur = {name:'', line:''};
+  function seqFor(line, name){
+    const L = LINES[line], c = [];
+    if(L.main.includes(name)) c.push({arr:L.main, ring:!!L.ring});
+    if(L.loop) c.push({arr:[L.main[0], ...L.loop], ring:true});
+    Object.entries(L.branches||{}).forEach(([o, list]) => c.push({arr:[o, ...list], ring:false}));
+    return c.find(x => x.arr.includes(name));
+  }
+  function neighbor(dir){
+    const q = seqFor(cur.line, cur.name); if(!q) return null;
+    const n = q.arr.length; let i = q.arr.indexOf(cur.name);
+    for(let k = 0; k < n; k++){
+      i += dir;
+      if(q.ring) i = (i + n) % n; else if(i < 0 || i >= n) return null;
+      if(q.arr[i] !== cur.name && hasMap(q.arr[i])) return q.arr[i];
+    }
+    return null;
+  }
+  function renderBar(){
+    const ls = $('#vLines'); ls.innerHTML = '';
+    linesOf(cur.name).forEach(l => {
+      const b = document.createElement('button');
+      b.className = 'vl' + (l === cur.line ? ' on' : ''); b.style.background = LINES[l].color; b.textContent = LINES[l].name;
+      b.onclick = () => { cur.line = l; renderBar(); };
+      ls.appendChild(b);
+    });
+    $('#vCur').textContent = cur.name + '역';
+    const p = neighbor(-1), n = neighbor(1);
+    $('#vPrev').textContent = p ? '◀ ' + p : '◀'; $('#vPrev').disabled = !p; $('#vPrev').dataset.to = p || '';
+    $('#vNext').textContent = n ? n + ' ▶' : '▶'; $('#vNext').disabled = !n; $('#vNext').dataset.to = n || '';
+  }
+  window.openViewer = (name, file, line) => {
+    cur.name = name;
+    const ls = linesOf(name);
+    cur.line = line && ls.includes(line) ? line : (ls.includes(cur.line) ? cur.line : ls[0]);
+    img.src = file || window.STATION_MAPS[name][0].file;
+    viewer.style.display = 'block';
+    renderBar();
+  };
+  function go(dir){
+    const to = neighbor(dir); if(to) window.openViewer(to, null, cur.line);
+  }
+  $('#vPrev').onclick = () => go(-1);
+  $('#vNext').onclick = () => go(1);
+  document.addEventListener('keydown', e => {
+    if(viewer.style.display !== 'block') return;
+    if(e.key === 'ArrowLeft') go(-1); else if(e.key === 'ArrowRight') go(1);
+    else if(e.key === 'Escape') viewer.style.display = 'none';
+  });
 
   function clamp(){
     const vw = viewer.clientWidth, vh = viewer.clientHeight;
@@ -402,9 +462,11 @@ $('#vClose').onclick = () => { $('#viewer').style.display = 'none'; };
     .observe(viewer, {attributes: true, attributeFilter: ['style']});
 
   viewer.addEventListener('pointerdown', e => {
-    if(e.target.tagName === 'BUTTON') return;
+    if(e.target.closest('button, .vbar')) return;
     viewer.setPointerCapture(e.pointerId);
     pts.set(e.pointerId, {x: e.clientX, y: e.clientY});
+    if(pts.size === 1) sw = {x: e.clientX, y: e.clientY, tx, multi: false};
+    if(pts.size >= 2 && sw) sw.multi = true;
     if(pts.size === 2){
       const [a, b] = [...pts.values()];
       lastDist = Math.hypot(a.x - b.x, a.y - b.y);
@@ -412,7 +474,7 @@ $('#vClose').onclick = () => { $('#viewer').style.display = 'none'; };
     const now = Date.now();
     if(pts.size === 1){
       if(now - lastTap < 300){
-        s > START * 1.2 ? reset() : zoomAt(1.6, e.clientX, e.clientY);
+        s > START * 1.2 ? reset() : zoomAt(ZOOM_TAP, e.clientX, e.clientY);
       }
       lastTap = now;
     }
@@ -430,7 +492,20 @@ $('#vClose').onclick = () => { $('#viewer').style.display = 'none'; };
       lastDist = d;
     }
   });
-  const up = e => { pts.delete(e.pointerId); lastDist = 0; };
+  const up = e => {
+    const wasSingle = pts.size === 1 && pts.has(e.pointerId);
+    pts.delete(e.pointerId); lastDist = 0;
+    if(wasSingle && sw && !sw.multi && e.type === 'pointerup'){
+      const dx = e.clientX - sw.x, dy = e.clientY - sw.y;
+      if(Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 2){
+        const minTx = viewer.clientWidth - img.offsetWidth * s;
+        const canNext = s <= 1.05 || sw.tx <= minTx + 1;   // 확대 상태에선 가장자리에서 한 번 더 밀 때만
+        const canPrev = s <= 1.05 || sw.tx >= -1;
+        if(dx < 0 && canNext) go(1); else if(dx > 0 && canPrev) go(-1);
+      }
+    }
+    if(!pts.size) sw = null;
+  };
   viewer.addEventListener('pointerup', up);
   viewer.addEventListener('pointercancel', up);
   viewer.addEventListener('wheel', e => {
