@@ -53,8 +53,9 @@ textarea,.in{width:100%;border:1px solid var(--line);background:var(--bg);color:
 textarea{min-height:110px;resize:vertical}
 #img{width:100%;border-radius:10px;margin-top:8px;display:none;border:1px solid var(--line)}
 #maps img{width:100%;border-radius:10px;border:1px solid var(--line);margin-top:8px;background:#fff}
-#viewer{position:fixed;inset:0;z-index:60;background:#000;display:none;overflow:auto;-webkit-overflow-scrolling:touch}
-#viewer img{width:250%;max-width:none;display:block;margin:auto;background:#fff}
+#viewer{position:fixed;inset:0;z-index:60;background:#000;display:none;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none}
+#viewer img{width:100vw;max-width:none;display:block;background:#fff;transform-origin:0 0;will-change:transform;-webkit-user-drag:none}
+#viewer .zb{position:fixed;right:12px;width:44px;height:44px;border-radius:50%;border:0;background:rgba(0,0,0,.65);color:#fff;font-size:24px;z-index:61}
 #viewer button{position:fixed;top:max(12px,env(safe-area-inset-top));right:12px;width:44px;height:44px;border-radius:50%;border:0;background:rgba(0,0,0,.65);color:#fff;font-size:22px;z-index:61}
 .hint{font-size:12px;color:var(--sub);margin:6px 0 0;line-height:1.5}
 </style>
@@ -69,7 +70,7 @@ textarea{min-height:110px;resize:vertical}
   <div id="map"></div>
   <div class="zoom"><button id="zin" aria-label="확대">+</button><button id="zout" aria-label="축소">−</button></div>
 </div>
-<div id="viewer"><button id="vClose" aria-label="닫기">✕</button><img id="vImg" alt="역내 지도"></div>
+<div id="viewer"><button id="vClose" aria-label="닫기">✕</button><button class="zb" id="vIn" style="top:70px" aria-label="확대">+</button><button class="zb" id="vOut" style="top:122px" aria-label="축소">−</button><img id="vImg" alt="역내 지도"></div>
 <div id="backdrop"></div>
 <div id="sheet" role="dialog" aria-modal="true">
   <div class="grab"></div>
@@ -368,6 +369,78 @@ function showImg(){
   if(v){ im.src = v; im.style.display = 'block'; im.onerror = () => im.style.display = 'none'; } else im.style.display = 'none';
 }
 $('#vClose').onclick = () => { $('#viewer').style.display = 'none'; };
+
+/* 이미지 뷰어: 핀치 확대/축소, 드래그 이동, 휠, 더블탭, +/- 버튼 */
+(() => {
+  const viewer = $('#viewer'), img = $('#vImg');
+  const MIN = 1, MAX = 8, START = 2.5;
+  let s = START, tx = 0, ty = 0;
+  const pts = new Map();
+  let lastDist = 0, lastTap = 0;
+
+  function clamp(){
+    const vw = viewer.clientWidth, vh = viewer.clientHeight;
+    const w = img.offsetWidth * s, h = img.offsetHeight * s;
+    tx = w <= vw ? (vw - w) / 2 : Math.min(0, Math.max(vw - w, tx));
+    ty = h <= vh ? (vh - h) / 2 : Math.min(0, Math.max(vh - h, ty));
+  }
+  function apply(){ clamp(); img.style.transform = `translate(${tx}px,${ty}px) scale(${s})`; }
+  function zoomAt(f, cx, cy){
+    const ns = Math.min(MAX, Math.max(MIN, s * f));
+    f = ns / s;
+    tx = cx - (cx - tx) * f;
+    ty = cy - (cy - ty) * f;
+    s = ns; apply();
+  }
+  function reset(){
+    s = START; tx = 0; ty = 0;
+    apply();
+  }
+  window.resetViewer = reset;
+  img.addEventListener('load', reset);
+  new MutationObserver(() => { if(viewer.style.display === 'block') reset(); })
+    .observe(viewer, {attributes: true, attributeFilter: ['style']});
+
+  viewer.addEventListener('pointerdown', e => {
+    if(e.target.tagName === 'BUTTON') return;
+    viewer.setPointerCapture(e.pointerId);
+    pts.set(e.pointerId, {x: e.clientX, y: e.clientY});
+    if(pts.size === 2){
+      const [a, b] = [...pts.values()];
+      lastDist = Math.hypot(a.x - b.x, a.y - b.y);
+    }
+    const now = Date.now();
+    if(pts.size === 1){
+      if(now - lastTap < 300){
+        s > START * 1.2 ? reset() : zoomAt(1.6, e.clientX, e.clientY);
+      }
+      lastTap = now;
+    }
+  });
+  viewer.addEventListener('pointermove', e => {
+    const p = pts.get(e.pointerId); if(!p) return;
+    if(pts.size === 1){
+      tx += e.clientX - p.x; ty += e.clientY - p.y;
+      p.x = e.clientX; p.y = e.clientY; apply();
+    } else if(pts.size === 2){
+      p.x = e.clientX; p.y = e.clientY;
+      const [a, b] = [...pts.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      if(lastDist) zoomAt(d / lastDist, (a.x + b.x) / 2, (a.y + b.y) / 2);
+      lastDist = d;
+    }
+  });
+  const up = e => { pts.delete(e.pointerId); lastDist = 0; };
+  viewer.addEventListener('pointerup', up);
+  viewer.addEventListener('pointercancel', up);
+  viewer.addEventListener('wheel', e => {
+    e.preventDefault();
+    zoomAt(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX, e.clientY);
+  }, {passive: false});
+  const cx = () => viewer.clientWidth / 2, cy = () => viewer.clientHeight / 2;
+  $('#vIn').onclick = () => zoomAt(1.4, cx(), cy());
+  $('#vOut').onclick = () => zoomAt(1 / 1.4, cx(), cy());
+})();
 function closeSheet(){ $('#sheet').classList.remove('on'); $('#backdrop').classList.remove('on'); }
 $('#backdrop').onclick = closeSheet;
 
