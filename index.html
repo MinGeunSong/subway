@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>수도권 역내 지도</title>
+<style>
+:root{
+  --bg:#f6f7f9; --card:#ffffff; --text:#1a1d21; --sub:#6b7280; --line:#e2e5ea;
+  --station-fill:#ffffff; --station-stroke:#2b2f36; --accent:#2563eb;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#101216; --card:#1a1d23; --text:#eceef2; --sub:#9aa1ad; --line:#2d323b;
+    --station-fill:#1a1d23; --station-stroke:#e5e7eb; --accent:#6ea0ff; }
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif;display:flex;flex-direction:column;overflow:hidden}
+header{background:var(--card);border-bottom:1px solid var(--line);padding:10px 16px 8px;padding-top:max(10px,env(safe-area-inset-top))}
+.row{display:flex;gap:8px;align-items:center}
+.legend{display:flex;gap:14px;align-items:center;font-size:12px;color:var(--sub);padding:8px 0 0}.legend i{display:inline-block;width:11px;height:11px;border-radius:50%;margin-right:5px;vertical-align:-1px}.legend i.hollow{background:var(--station-fill);border:3px solid #747F00;width:12px;height:12px}
+.tabs{display:flex;gap:6px;overflow-x:auto;padding:8px 0 2px;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{flex:none;border:2px solid var(--line);background:transparent;color:var(--text);border-radius:999px;padding:6px 14px;font-size:14px;font-weight:600}
+.tab.on{color:#fff;border-color:transparent}
+#q{flex:1;min-width:0;border:1px solid var(--line);background:var(--bg);color:var(--text);border-radius:10px;padding:9px 12px;font-size:16px}
+#results{position:absolute;left:16px;right:16px;top:58px;z-index:20;background:var(--card);border:1px solid var(--line);border-radius:12px;max-height:50vh;overflow:auto;display:none;box-shadow:0 8px 24px rgba(0,0,0,.18)}
+#results button{display:flex;width:100%;gap:8px;align-items:center;text-align:left;background:none;border:0;border-bottom:1px solid var(--line);padding:12px 14px;font-size:15px;color:var(--text)}
+#results button:last-child{border-bottom:0}
+.dot{width:12px;height:12px;border-radius:50%;flex:none}
+#wrap{flex:1;position:relative;min-height:0}
+#map{position:absolute;inset:0;overflow:auto;-webkit-overflow-scrolling:touch}
+#map svg{display:block}
+.zoom{position:absolute;right:12px;bottom:calc(16px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:8px;z-index:5}
+.zoom button{width:44px;height:44px;border-radius:50%;border:1px solid var(--line);background:var(--card);color:var(--text);font-size:22px;box-shadow:0 2px 8px rgba(0,0,0,.15)}
+.st{cursor:pointer}
+.lbl{font-size:11px;fill:var(--text);font-weight:500;pointer-events:none}
+.sel .ring{stroke-width:5}
+#backdrop{position:fixed;inset:0;background:rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .2s;z-index:30}
+#backdrop.on{opacity:1;pointer-events:auto}
+#sheet{position:fixed;left:0;right:0;bottom:0;z-index:40;background:var(--card);border-radius:18px 18px 0 0;max-height:82vh;overflow:auto;transform:translateY(105%);transition:transform .25s ease;padding:8px 18px calc(22px + env(safe-area-inset-bottom));box-shadow:0 -6px 24px rgba(0,0,0,.2)}
+#sheet.on{transform:none}
+.grab{width:40px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 12px}
+#sheet h2{margin:0;font-size:22px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+.chip{border:0;border-radius:999px;padding:5px 11px;font-size:13px;font-weight:600;color:#fff}
+.chip.gray{background:var(--sub)}
+.btn{display:block;text-align:center;text-decoration:none;background:var(--accent);color:#fff;border-radius:12px;padding:13px;font-weight:700;font-size:15px;margin:12px 0}
+h3{font-size:13px;color:var(--sub);margin:16px 0 6px;font-weight:600}
+textarea,.in{width:100%;border:1px solid var(--line);background:var(--bg);color:var(--text);border-radius:10px;padding:10px;font-size:16px;font-family:inherit}
+textarea{min-height:110px;resize:vertical}
+#img{width:100%;border-radius:10px;margin-top:8px;display:none;border:1px solid var(--line)}
+#maps img{width:100%;border-radius:10px;border:1px solid var(--line);margin-top:8px;background:#fff}
+#viewer{position:fixed;inset:0;z-index:60;background:#000;display:none;overflow:auto;-webkit-overflow-scrolling:touch}
+#viewer img{width:250%;max-width:none;display:block;margin:auto;background:#fff}
+#viewer button{position:fixed;top:max(12px,env(safe-area-inset-top));right:12px;width:44px;height:44px;border-radius:50%;border:0;background:rgba(0,0,0,.65);color:#fff;font-size:22px;z-index:61}
+.hint{font-size:12px;color:var(--sub);margin:6px 0 0;line-height:1.5}
+</style>
+</head>
+<body>
+<header>
+  <div class="row"><input id="q" type="search" placeholder="역 이름 검색 (예: 공덕)" autocomplete="off"></div>
+  <div class="legend"><span><i style="background:#16a34a"></i>안내도 있음</span><span><i class="hollow"></i>없음</span></div>
+</header>
+<div id="results"></div>
+<div id="wrap">
+  <div id="map"></div>
+  <div class="zoom"><button id="zin" aria-label="확대">+</button><button id="zout" aria-label="축소">−</button></div>
+</div>
+<div id="viewer"><button id="vClose" aria-label="닫기">✕</button><img id="vImg" alt="역내 지도"></div>
+<div id="backdrop"></div>
+<div id="sheet" role="dialog" aria-modal="true">
+  <div class="grab"></div>
+  <h2 id="sName"></h2>
+  <div class="chips" id="sChips"></div>
+  <div id="maps"></div>
+  <a class="btn" id="sNamu" target="_blank" rel="noopener">나무위키 페이지 열기</a>
+  <h3>층별 안내 (내가 적는 메모)</h3>
+  <textarea id="sMemo" placeholder="예)&#10;B1 대합실, 화장실, 편의점&#10;B2 승강장 (신내행 / 응암행)&#10;3번 출구 쪽 엘리베이터"></textarea>
+  <h3>내부 지도 이미지 주소 (선택)</h3>
+  <input class="in" id="sImg" type="url" placeholder="https://...">
+  <img id="img" alt="역내 지도">
+  <p class="hint">메모와 이미지 주소는 이 기기 브라우저에만 저장됩니다.<br>역 정보 출처: 나무위키 (CC BY-NC-SA 2.0 KR)</p>
+</div>
+
+<script src="stations.js"></script>
+<script>
+/* ---------- 데이터 ---------- */
+// 호선 추가는 LINES 에 항목만 더하면 됨. main = 본선 순서, loop = 응암순환 같은 지선(순환) 순서.
+const LINES = {
+  '6': { name:'6호선', color:'#CD7C2F',
+    main:['응암','새절','증산','디지털미디어시티','월드컵경기장','마포구청','망원','합정','상수','광흥창','대흥','공덕','효창공원앞','삼각지','녹사평','이태원','한강진','버티고개','약수','청구','신당','동묘앞','창신','보문','안암','고려대','월곡','상월곡','돌곶이','석계','태릉입구','화랑대','봉화산','신내'],
+    loop:['역촌','불광','독바위','연신내','구산'] },
+  '7': { name:'7호선', color:'#747F00',
+    main:['장암','도봉산','수락산','마들','노원','중계','하계','공릉','태릉입구','먹골','중화','상봉','면목','사가정','용마산','중곡','군자','어린이대공원','건대입구','뚝섬유원지','청담','강남구청','학동','논현','반포','고속터미널','내방','이수','남성','숭실대입구','상도','장승배기','신대방삼거리','보라매','신풍','대림','남구로','가산디지털단지','철산','광명사거리','천왕','온수','까치울','부천종합운동장','춘의','신중동','부천시청','상동','삼산체육관','굴포천','부평구청','산곡','석남'] },
+  '2': { name:'2호선', color:'#00A84D', ring:true,
+    main:['시청','을지로입구','을지로3가','을지로4가','동대문역사문화공원','신당','상왕십리','왕십리','한양대','뚝섬','성수','건대입구','구의','강변','잠실나루','잠실','잠실새내','종합운동장','삼성','선릉','역삼','강남','교대','서초','방배','사당','낙성대','서울대입구','봉천','신림','신대방','구로디지털단지','대림','신도림','문래','영등포구청','당산','합정','홍대입구','신촌','이대','아현','충정로'],
+    branches:{ '성수':['용답','신답','용두','신설동'], '신도림':['도림천','양천구청','신정네거리','까치산'] } }
+};
+// 환승 (6·7호선 외 노선). 6↔7 환승은 자동 계산.
+const XFER = {
+  '불광':['3호선'],'연신내':['3호선'],'디지털미디어시티':['공항철도','경의중앙선'],'공덕':['5호선','공항철도','경의중앙선'],
+  '효창공원앞':['경의중앙선'],'삼각지':['4호선'],'약수':['3호선'],'청구':['5호선'],'동묘앞':['1호선'],'보문':['우이신설선'],
+  '석계':['1호선'],'화랑대':['경춘선'],'신내':['경춘선'],
+  '도봉산':['1호선'],'노원':['4호선'],'공릉':['경춘선'],'상봉':['경의중앙선','경춘선'],'군자':['5호선'],'강남구청':['수인분당선'],
+  '논현':['9호선'],'고속터미널':['3호선','9호선'],'이수':['4호선'],'보라매':['신림선'],'가산디지털단지':['1호선'],'온수':['1호선'],
+  '부평구청':['인천1호선'],'석남':['인천2호선'],
+  '시청':['1호선'],'을지로3가':['3호선'],'을지로4가':['5호선'],'동대문역사문화공원':['4호선','5호선'],'왕십리':['5호선','경의중앙선','수인분당선'],
+  '잠실':['8호선'],'종합운동장':['9호선'],'선릉':['수인분당선'],'강남':['신분당선'],'교대':['3호선'],'사당':['4호선'],'신림':['신림선'],
+  '신도림':['1호선'],'당산':['9호선'],'영등포구청':['5호선'],'홍대입구':['공항철도','경의중앙선'],'충정로':['5호선'],'신설동':['1호선','우이신설선'],'까치산':['5호선']
+};
+const OTHER_COLOR = {'1호선':'#0052A4','2호선':'#00A84D','3호선':'#EF7C1C','4호선':'#00A5DE','5호선':'#996CAC','9호선':'#BDB092','인천1호선':'#7CA8D5','인천2호선':'#ED8B00','수인분당선':'#F5A200','경의중앙선':'#77C4A3','공항철도':'#0090D2','경춘선':'#0C8E72','신림선':'#6789CA','우이신설선':'#B0CE18','8호선':'#E6186C','신분당선':'#D4003B'};
+
+/* ---------- 유틸 ---------- */
+const $ = s => document.querySelector(s);
+const store = {
+  get(k){ try{ return localStorage.getItem(k) || ''; }catch(e){ return ''; } },
+  set(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+};
+const NS = 'http://www.w3.org/2000/svg';
+function el(tag, attrs, parent){
+  const n = document.createElementNS(NS, tag);
+  for(const k in attrs) n.setAttribute(k, attrs[k]);
+  if(parent) parent.appendChild(n);
+  return n;
+}
+const stationsOf = L => [...L.main, ...(L.loop||[]), ...Object.values(L.branches||{}).flat()];
+function linesOf(name){ return Object.keys(LINES).filter(l => stationsOf(LINES[l]).includes(name)); }
+const hasMap = n => !!((window.STATION_MAPS||{})[n]||[]).length;
+const isXfer = n => linesOf(n).length > 1 || !!XFER[n];
+const GREEN = '#16a34a';
+
+/* ---------- 도식(schematic) 규칙 ----------
+   · 선은 수평·수직·45° 방향만 쓴다 (좌표는 '역 간격' 단위의 격자 위에 둔다)
+   · 꺾이는 곳은 모든 노선이 같은 반경(RAD)의 호, 짧은 구간에서는 구간의 절반까지만 줄어든다
+   · 역은 구간(환승역~환승역) 안에서 같은 간격, 환승역은 한 점에 하나
+   · 라벨은 항상 수평, 겹치지 않는 자리(위/아래/좌/우/대각)를 자동 선택            */
+const SP = 54, RAD = 1.8, PAD = 80;
+const RING = { W:13, H:10, S0:2.5 };           // 2호선: 둥근 사각형 (시청의 시작 위치 S0)
+
+function ringInfo(){
+  const r = RAD, top = RING.W-2*r, side = RING.H-2*r, arc = Math.PI*r/2;
+  return { r, top, side, arc, per:2*top+2*side+4*arc };
+}
+function ringPoint(s){
+  const {r, top, side, arc, per} = ringInfo(), W = RING.W, H = RING.H;
+  s = ((s % per) + per) % per;
+  if(s < top) return [r+s, 0]; s -= top;
+  if(s < arc){ const t = -Math.PI/2 + s/r; return [W-r+r*Math.cos(t), r+r*Math.sin(t)]; } s -= arc;
+  if(s < side) return [W, r+s]; s -= side;
+  if(s < arc){ const t = s/r; return [W-r+r*Math.cos(t), H-r+r*Math.sin(t)]; } s -= arc;
+  if(s < top) return [W-r-s, H]; s -= top;
+  if(s < arc){ const t = Math.PI/2 + s/r; return [r+r*Math.cos(t), H-r+r*Math.sin(t)]; } s -= arc;
+  if(s < side) return [0, H-r-s]; s -= side;
+  const t = Math.PI + s/r; return [r+r*Math.cos(t), r+r*Math.sin(t)];
+}
+
+// 노선별 경로 (단위: 역 간격). verts = 꺾이는 점, anchors = 위치가 고정된 역(환승역)
+function buildSpecs(rp){
+  const yh = rp['합정'][1], xs = rp['신당'][0], kd = rp['건대입구'], dl = rp['대림'], sd = rp['신도림'], ss = rp['성수'];
+  const X7 = 14.4, YT = -6.4, XV = -4.2, Y7 = dl[1];
+  const specs = [];
+  // 6호선
+  const e0 = [XV, yh-3.7];
+  specs.push({ line:'6', stations:LINES['6'].main,
+    verts:[e0,[XV,yh-1.5],[XV+1.5,yh],[xs,yh],[xs,YT+1.5],[xs+1.5,YT],[X7+2,YT],[X7+3,YT+1]],
+    anchors:{'합정':[0,yh],'신당':[xs,0],'태릉입구':[X7,YT]} });
+  specs.push({ line:'6', closed:true, stations:['응암', ...LINES['6'].loop.slice().reverse()],
+    verts:[[0,0],[0,-2],[0.8,-2.8],[1.6,-2],[1.6,-1.6],[0,0]].map(p => [e0[0]+p[0], e0[1]+p[1]]), anchors:{} });
+  // 7호선
+  const D7 = kd[1] - (X7-13);                    // 건대입구를 지나는 45° 대각선이 세로선과 만나는 높이
+  specs.push({ line:'7', stations:LINES['7'].main,
+    verts:[[X7-2.1,YT-5.6],[X7-1.5,YT-6.2],[X7-0.6,YT-6.2],[X7,YT-5.6],[X7,D7],[X7-(Y7-D7),Y7],
+           [-8.6,Y7],[-9.4,Y7-0.8],[-9.4,Y7-2.0],[-10.1,Y7-2.7],[-11.1,Y7-2.7],[-11.8,Y7-2.0],[-11.8,Y7-0.85],[-12.5,Y7-0.15],[-13.5,Y7-0.15]],
+    anchors:{'태릉입구':[X7,YT],'건대입구':kd,'대림':dl,'부천종합운동장':[-8,Y7]} });
+  // 2호선 지선
+  specs.push({ line:'2', stations:['성수', ...LINES['2'].branches['성수']],
+    verts:[ss,[13,-0.4],[12,-1.4],[11,-1.4]], anchors:{} });
+  specs.push({ line:'2', stations:['신도림', ...LINES['2'].branches['신도림']],
+    verts:[sd,[-2.4,sd[1]],[-3.2,sd[1]-0.8]], anchors:{} });
+  return specs;
+}
+
+function roundedPath(P, R){
+  let d = `M${P[0].x},${P[0].y}`;
+  for(let i=1;i<P.length-1;i++){
+    const a=P[i-1], b=P[i], c=P[i+1];
+    const l1 = Math.hypot(b.x-a.x,b.y-a.y), l2 = Math.hypot(c.x-b.x,c.y-b.y);
+    if(l1 < 1 || l2 < 1) continue;
+    const v1 = [(b.x-a.x)/l1,(b.y-a.y)/l1], v2 = [(c.x-b.x)/l2,(c.y-b.y)/l2];
+    const dot = v1[0]*v2[0]+v1[1]*v2[1], cross = v1[0]*v2[1]-v1[1]*v2[0];
+    if(dot > 0.9995){ d += `L${b.x},${b.y}`; continue; }
+    const th = Math.acos(Math.max(-1, Math.min(1, dot))), tn = Math.tan(th/2);
+    const r = Math.min(R, Math.min(l1,l2)*0.5/tn), t = r*tn;
+    d += `L${b.x-v1[0]*t},${b.y-v1[1]*t}A${r},${r} 0 0 ${cross>0?1:0} ${b.x+v2[0]*t},${b.y+v2[1]*t}`;
+  }
+  const z = P[P.length-1]; return d + `L${z.x},${z.y}`;
+}
+function rectPath({x0,y0,x1,y1,r}){
+  return `M${x0+r},${y0}H${x1-r}A${r},${r} 0 0 1 ${x1},${y0+r}V${y1-r}A${r},${r} 0 0 1 ${x1-r},${y1}H${x0+r}A${r},${r} 0 0 1 ${x0},${y1-r}V${y0+r}A${r},${r} 0 0 1 ${x0+r},${y0}Z`;
+}
+
+/* ---------- 렌더 ---------- */
+let scale = 0.6, geom = null;
+const mapEl = $('#map');
+const SPACING_LOG = {};
+
+function render(){
+  const R = RAD*SP, info = ringInfo(), N2 = LINES['2'].main.length;
+  const rp = {};
+  LINES['2'].main.forEach((n,i) => rp[n] = ringPoint(RING.S0 + i*info.per/N2));
+  const specs = buildSpecs(rp);
+
+  let minx = 0, miny = 0, maxx = RING.W, maxy = RING.H;
+  specs.forEach(sp => sp.verts.forEach(v => { minx = Math.min(minx,v[0]); miny = Math.min(miny,v[1]); maxx = Math.max(maxx,v[0]); maxy = Math.max(maxy,v[1]); }));
+  const P = v => ({ x:(v[0]-minx)*SP+PAD, y:(v[1]-miny)*SP+PAD });
+  const w = (maxx-minx)*SP + 2*PAD + 40, h = (maxy-miny)*SP + 2*PAD;
+
+  mapEl.innerHTML = '';
+  const svg = el('svg', { viewBox:`0 0 ${w} ${h}`, width:w*scale, height:h*scale }, mapEl);
+  const pos = {}, base = c => ({ fill:'none', stroke:c, 'stroke-width':8, 'stroke-linejoin':'round', 'stroke-linecap':'round' });
+  const lineSamples = [];
+  const sample = (pe, step) => { const len = pe.getTotalLength(), out = []; for(let t=0;t<=len;t+=step){ const q = pe.getPointAtLength(t); out.push([t,q.x,q.y]); } return { len, out }; };
+
+  // 2호선 본선(둥근 사각형)과 환승역 위치
+  const p0 = P([0,0]), p1 = P([RING.W,RING.H]);
+  const ringEl = el('path', { ...base(LINES['2'].color), d:rectPath({ x0:p0.x, y0:p0.y, x1:p1.x, y1:p1.y, r:R }) }, svg);
+  sample(ringEl, 6).out.forEach(q => lineSamples.push([q[1],q[2]]));
+  for(const n in rp) pos[n] = P(rp[n]);
+  specs.forEach(sp => { for(const n in sp.anchors) if(!pos[n]) pos[n] = P(sp.anchors[n]); });
+
+  // 노선 경로 + 역을 같은 간격으로 배치
+  specs.forEach(sp => {
+    const pe = el('path', { ...base(LINES[sp.line].color), d:roundedPath(sp.verts.map(P), R) }, svg);
+    const { len, out } = sample(pe, 1.5);
+    out.forEach((q,i) => { if(i % 4 === 0) lineSamples.push([q[1],q[2]]); });
+    const N = sp.stations.length, key = [];
+    if(sp.closed){ for(let i=0;i<N;i++) key.push([i, len*i/N]); }
+    else {
+      key.push([0,0]);
+      sp.stations.forEach((n,i) => {
+        if(i > 0 && i < N-1 && sp.anchors[n]){
+          const a = P(sp.anchors[n]); let best = 0, bd = 1e12;
+          out.forEach(q => { const d = (q[1]-a.x)**2 + (q[2]-a.y)**2; if(d < bd){ bd = d; best = q[0]; } });
+          key.push([i, best]);
+        }
+      });
+      key.push([N-1, len]);
+    }
+    const sv = [];
+    for(let k=0;k<key.length;k++){
+      const [i0,s0] = key[k], [i1,s1] = k+1 < key.length ? key[k+1] : [N, len];
+      for(let i=i0;i<(k+1 < key.length ? i1 : i0+1);i++){
+        const s = s0 + (s1-s0)*(i-i0)/(i1-i0), n = sp.stations[i];
+        if(!pos[n]){ const q = pe.getPointAtLength(s); pos[n] = { x:q.x, y:q.y }; }
+        sv.push(s);
+      }
+      if(k+1 < key.length) sv.push(s1);
+    }
+    const gaps = []; for(let i=1;i<sv.length;i++) if(sv[i]-sv[i-1] > 1) gaps.push((sv[i]-sv[i-1])/SP);
+    SPACING_LOG[sp.line + ':' + sp.stations[0]] = gaps.length ? [Math.min(...gaps).toFixed(2), Math.max(...gaps).toFixed(2)] : [];
+  });
+
+  // 라벨 위치: 겹치지 않는 자리를 자동 선택
+  const names = Object.keys(pos);
+  const neigh = {};
+  const seqs = [...specs.map(sp => sp.stations), LINES['2'].main];
+  seqs.forEach((seq,si) => seq.forEach((n,i) => {
+    if(neigh[n]) return;
+    const a = pos[seq[Math.max(0,i-1)]], b = pos[seq[Math.min(seq.length-1,i+1)]];
+    if(a && b && (a !== b)) neigh[n] = [b.x-a.x, b.y-a.y, i];
+  }));
+  const circles = names.map(n => [pos[n].x, pos[n].y, isXfer(n) ? 14 : 11, n]);
+  const placed = [], layout = {};
+  const hit = (b, n) => {
+    let c = 0;
+    placed.forEach(q => { if(b[0] < q[2]+1 && b[2] > q[0]-1 && b[1] < q[3]+1 && b[3] > q[1]-1) c += 3; });
+    circles.forEach(q => { if(q[3] !== n && b[0] < q[0]+q[2] && b[2] > q[0]-q[2] && b[1] < q[1]+q[2] && b[3] > q[1]-q[2]) c += 3; });
+    lineSamples.forEach(q => { if(q[0] > b[0]-2 && q[0] < b[2]+2 && q[1] > b[1]-2 && q[1] < b[3]+2) c += 1; });
+    return c;
+  };
+  names.slice().sort((a,b) => isXfer(b) - isXfer(a)).forEach(n => {
+    const p = pos[n], nb = neigh[n] || [1,0,0];
+    const wrap = n.length > 4 ? [n.slice(0, Math.ceil(n.length/2)), n.slice(Math.ceil(n.length/2))] : [n];
+    const lw = Math.max(...wrap.map(s => s.length))*11.6, lh = wrap.length*12.5;
+    const box = {
+      up:   [p.x-lw/2, p.y-12-lh, p.x+lw/2, p.y-12, 'middle', p.x],
+      down: [p.x-lw/2, p.y+12, p.x+lw/2, p.y+12+lh, 'middle', p.x],
+      right:[p.x+13, p.y-lh/2, p.x+13+lw, p.y+lh/2, 'start', p.x+13],
+      left: [p.x-13-lw, p.y-lh/2, p.x-13, p.y+lh/2, 'end', p.x-13],
+      rd:   [p.x+9, p.y+4, p.x+9+lw, p.y+4+lh, 'start', p.x+9],
+      ru:   [p.x+9, p.y-4-lh, p.x+9+lw, p.y-4, 'start', p.x+9],
+      ld:   [p.x-9-lw, p.y+4, p.x-9, p.y+4+lh, 'end', p.x-9],
+      lu:   [p.x-9-lw, p.y-4-lh, p.x-9, p.y-4, 'end', p.x-9]
+    };
+    const ax = Math.abs(nb[0]), ay = Math.abs(nb[1]), odd = nb[2] % 2;
+    let order;
+    if(ax >= ay*1.7) order = odd ? ['down','up','right','left','rd','ru','ld','lu'] : ['up','down','right','left','ru','rd','lu','ld'];
+    else if(ay >= ax*1.7) order = ['right','left','up','down','ru','rd','lu','ld'];
+    else if(nb[0]*nb[1] < 0) order = ['rd','lu','right','left','down','up','ru','ld'];   // ↙↗ 선: 오른쪽 아래 / 왼쪽 위가 비어 있음
+    else order = ['ru','ld','right','left','up','down','rd','lu'];                          // ↘↖ 선
+    let best = null, bc = 1e9;
+    for(const k of order){ const c = hit(box[k], n); if(c < bc){ bc = c; best = k; if(c === 0) break; } }
+    const b = box[best]; placed.push(b);
+    layout[n] = { b, wrap };
+  });
+
+  // 역 그리기
+  names.forEach(n => {
+    const p = pos[n], ls = linesOf(n), multi = ls.length > 1, hasX = isXfer(n), img = hasMap(n);
+    const g = el('g', { class:'st', 'data-n':n }, svg);
+    el('circle', { cx:p.x, cy:p.y, r:20, fill:'transparent' }, g);
+    const r = hasX ? 10 : 7.5;
+    el('circle', { class:'ring', cx:p.x, cy:p.y, r, fill: img ? GREEN : 'var(--station-fill)',
+      stroke: hasX ? 'var(--station-stroke)' : LINES[ls[0]].color, 'stroke-width':3.5 }, g);
+    if(multi) ls.forEach((l,i) => el('circle', { cx:p.x + (i ? 3.5 : -3.5), cy:p.y, r:2.6, fill:LINES[l].color }, g));
+    const { b, wrap } = layout[n];
+    const t = el('text', { class:'lbl', x:b[5], y:b[1]+10, 'text-anchor':b[4] }, g);
+    wrap.forEach((s2,i) => { const ts = el('tspan', { x:b[5], dy: i ? 12.5 : 0 }, t); ts.textContent = s2; });
+    g.addEventListener('click', () => openStation(n));
+  });
+  geom = { pos, w, h };
+}
+
+function setScale(s){
+  const cx = (mapEl.scrollLeft + mapEl.clientWidth/2)/scale, cy = (mapEl.scrollTop + mapEl.clientHeight/2)/scale;
+  scale = Math.max(0.15, Math.min(2.5, s));
+  const svg = mapEl.querySelector('svg');
+  svg.setAttribute('width', geom.w*scale); svg.setAttribute('height', geom.h*scale);
+  mapEl.scrollTo(cx*scale - mapEl.clientWidth/2, cy*scale - mapEl.clientHeight/2);
+}
+$('#zin').onclick = () => setScale(scale*1.25);
+$('#zout').onclick = () => setScale(scale/1.25);
+
+/* ---------- 역 시트 ---------- */
+function openStation(n){
+  $('#sName').textContent = n + '역';
+  const chips = $('#sChips'); chips.innerHTML = '';
+  linesOf(n).forEach(l => {
+    const b = document.createElement('button');
+    b.className = 'chip'; b.style.background = LINES[l].color; b.textContent = LINES[l].name;
+    b.onclick = () => focus(n);
+    chips.appendChild(b);
+  });
+  (XFER[n]||[]).forEach(o => {
+    const s = document.createElement('span');
+    s.className = 'chip'; s.style.background = OTHER_COLOR[o] || '#6b7280'; s.textContent = o;
+    chips.appendChild(s);
+  });
+  const mp = $('#maps'); mp.innerHTML = '';
+  ((window.STATION_MAPS||{})[n]||[]).forEach(m => {
+    const im = document.createElement('img'); im.src = m.file; im.alt = m.alt;    im.onclick = () => { $('#vImg').src = m.file; $('#viewer').style.display = 'block'; $('#viewer').scrollTo(0,0); };
+    mp.appendChild(im);
+  });
+  $('#sNamu').href = 'https://namu.wiki/Search?q=' + encodeURIComponent(n + '역');
+  const memo = $('#sMemo'), img = $('#sImg');
+  memo.value = store.get('memo:' + n); img.value = store.get('img:' + n);
+  memo.oninput = () => store.set('memo:' + n, memo.value);
+  img.oninput = () => { store.set('img:' + n, img.value.trim()); showImg(); };
+  showImg();
+  $('#sheet').classList.add('on'); $('#backdrop').classList.add('on');
+  $('#sheet').scrollTop = 0;
+}
+function showImg(){
+  const v = $('#sImg').value.trim(), im = $('#img');
+  if(v){ im.src = v; im.style.display = 'block'; im.onerror = () => im.style.display = 'none'; } else im.style.display = 'none';
+}
+$('#vClose').onclick = () => { $('#viewer').style.display = 'none'; };
+function closeSheet(){ $('#sheet').classList.remove('on'); $('#backdrop').classList.remove('on'); }
+$('#backdrop').onclick = closeSheet;
+
+function focus(n){
+  const p = geom.pos[n]; if(!p) return;
+  mapEl.scrollTo({ left:p.x*scale - mapEl.clientWidth/2, top:p.y*scale - mapEl.clientHeight/3, behavior:'smooth' });
+}
+
+/* ---------- 검색 ---------- */
+const q = $('#q'), results = $('#results');
+q.addEventListener('input', () => {
+  const v = q.value.trim().replace(/역$/, '');
+  results.innerHTML = '';
+  if(!v){ results.style.display = 'none'; return; }
+  const hits = [];
+  Object.keys(LINES).forEach(l => stationsOf(LINES[l]).forEach(n => { if(n.includes(v)) hits.push([l,n]); }));
+  hits.slice(0, 30).forEach(([l,n]) => {
+    const b = document.createElement('button');
+    b.innerHTML = `<span class="dot" style="background:${LINES[l].color}"></span><span>${n}역</span><span style="color:var(--sub);margin-left:auto;font-size:13px">${LINES[l].name}</span>`;
+    b.onclick = () => { results.style.display = 'none'; q.value = ''; q.blur(); focus(n); openStation(n); };
+    results.appendChild(b);
+  });
+  if(!hits.length) results.innerHTML = '<button disabled>검색 결과 없음</button>';
+  results.style.display = 'block';
+});
+document.addEventListener('click', e => { if(!results.contains(e.target) && e.target !== q) results.style.display = 'none'; });
+
+render();
+requestAnimationFrame(() => { const t = geom.pos['시청']; mapEl.scrollTo(t.x*scale - mapEl.clientWidth/2, t.y*scale - mapEl.clientHeight/2); });
+</script>
+</body>
+</html>
